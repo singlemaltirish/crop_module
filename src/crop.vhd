@@ -32,9 +32,9 @@ ENTITY crop IS
 END ENTITY;
 
 ARCHITECTURE rtl OF crop IS
-  SIGNAL captured_pixel_reg  : STD_LOGIC_VECTOR(ENCODING_WDH - 1 DOWNTO 0) := (OTHERS => '0');
-  SIGNAL captured_pixels_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
-  SIGNAL snk_tuser_reg       : STD_LOGIC                                   := '0';
+  SIGNAL captured_pixel_reg   : STD_LOGIC_VECTOR(ENCODING_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  SIGNAL captured_columns_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
+  SIGNAL captured_rows_cnt    : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
 BEGIN
 
   --! Process used for driving Tready Signals. Whenever rst signal is asserted module is not ready for recieving the data.
@@ -66,41 +66,47 @@ BEGIN
     END IF;
   END PROCESS;
 
-  --! Process used for counting up incoming pixels from video stream. Whenever rst signal is asserted,
-  --! it will clear the counter at first upcoming rising edge. In normal operation cnt will be set to zero, whenever
-  --! start of new frame is indicated by snk_tuser_valid (at its rising_edge). Then it will be set to '1' only when
-  --! snk_tvalid, snk_tready and snk_tuser will be High (indicating start of the frame). Every clock cycle it will
-  --! then check if the master module is transmitting the data by checking snk_tvalid = '1' and snk_tready '1'.
+  --! Process used for counting up incoming columns from video stream. Whenever rst signal is asserted,
+  --! it will clear the counter at first upcoming rising edge. In normal operation cnt will be set to 0 only when
+  --! snk_tvalid, snk_tready and snk_tuser will be High (indicating start of the frame) or snk_tvalid, snk_tready and
+  --! snk_tlast will be High (indicating end of the line). Every clock cycle it will then check if the master
+  --! module is transmitting the data by checking snk_tvalid = '1' and snk_tready '1' and will increment by 1.
   --! In any other case it will hold its previous value.
-  count_capured_pixels_from_sink_proc : PROCESS (clk)
+  count_capured_columns_from_sink_proc : PROCESS (clk)
   BEGIN
     IF rising_edge(clk) THEN
       IF (rst = '1') THEN
-        captured_pixels_cnt <= (OTHERS => '0');
+        captured_columns_cnt <= (OTHERS => '0');
       ELSE
-        IF (snk_tuser = '1' AND snk_tuser_reg = '0') THEN -- TODO #1 It could overlap the second if in this chain
-          captured_pixels_cnt <= (OTHERS => '0');         -- think over which one will be better to implement
-        ELSIF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tuser = '1') THEN
-          captured_pixels_cnt <= TO_UNSIGNED(1, captured_pixels_cnt'length);
+        IF (snk_tvalid = '1' AND snk_tready = '1' AND (snk_tuser = '1' OR snk_tlast = '1')) THEN
+          captured_columns_cnt <= (OTHERS => '0');
         ELSIF (snk_tvalid = '1' AND snk_tready = '1') THEN
-          captured_pixels_cnt <= captured_pixels_cnt + 1;
+          captured_columns_cnt <= captured_columns_cnt + 1;
         ELSE
-          captured_pixels_cnt <= captured_pixels_cnt;
+          captured_columns_cnt <= captured_columns_cnt;
         END IF;
       END IF;
     END IF;
   END PROCESS;
 
-  --! Process used for registering and detecting rising_edge of snk_tuser input port.
-  capture_rising_edge_of_start_of_the_frame_marker : PROCESS (clk)
-  -- TODO #2 Links with #1. Maybe it will be better to simply watch for snk_tvalid, snk_tready, snk_tuser High.
-  -- Think over once testbench will be written.
+  --! Process used for counting up number of rows coming from transmitting device. Whenever rst signal is asserted,
+  --! it will clear the counter at first upcoming rising edge. In normal operation cnt will be set to 0 only when
+  --! snk_tvalid, snk_tready and snk_tuser will be High (indicating start of the frame). Every clock cycle it will
+  --! then check if snk_tvalid, snk_tready and snk_tlast is High (indication from Master that currently transferred pixel
+  --! is the last one from the line) and increment if so. In any other case it will hold its previous value.
+  count_completed_rows_from_sink_proc : PROCESS (clk)
   BEGIN
     IF rising_edge(clk) THEN
       IF (rst = '1') THEN
-        snk_tuser_reg <= '0';
+        captured_rows_cnt <= (OTHERS => '0');
       ELSE
-        snk_tuser_reg <= snk_tuser;
+        IF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tuser = '1') THEN
+          captured_rows_cnt <= (OTHERS => '0');
+        ELSIF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tlast = '1') THEN
+          captured_rows_cnt <= captured_rows_cnt + 1;
+        ELSE
+          captured_rows_cnt <= captured_rows_cnt;
+        END IF;
       END IF;
     END IF;
   END PROCESS;
