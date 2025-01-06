@@ -35,6 +35,11 @@ ARCHITECTURE rtl OF crop IS
   SIGNAL captured_pixel_reg   : STD_LOGIC_VECTOR(ENCODING_WDH - 1 DOWNTO 0) := (OTHERS => '0');
   SIGNAL captured_columns_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
   SIGNAL captured_rows_cnt    : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
+
+  SIGNAL cfg_x_offset_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  SIGNAL cfg_y_offset_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  SIGNAL cfg_cols_reg     : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  SIGNAL cfg_rows_reg     : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
 BEGIN
 
   --! Process used for driving Tready Signals. Whenever rst signal is asserted module is not ready for recieving the data.
@@ -111,4 +116,24 @@ BEGIN
     END IF;
   END PROCESS;
 
+  --! Configuration should be changable during runtime. This process allows to overwrite configuration only
+  --! when there is start of new frame detected. In any other case the configuration will be locked untill new frame.
+  capture_configuration_at_start_of_frame : PROCESS (clk)
+  BEGIN
+    IF rising_edge(clk) THEN
+      IF (rst = '1') THEN
+        cfg_x_offset_reg <= (OTHERS => '0');
+        cfg_y_offset_reg <= (OTHERS => '0');
+        cfg_cols_reg     <= (OTHERS => '0');
+        cfg_rows_reg     <= (OTHERS => '0');
+      ELSE
+        IF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tlast = '1') THEN
+          cfg_x_offset_reg <= unsigned(cfg_x_offset);
+          cfg_y_offset_reg <= unsigned(cfg_y_offset);
+          cfg_cols_reg     <= unsigned(cfg_cols);
+          cfg_rows_reg     <= unsigned(cfg_rows);
+        END IF;
+      END IF;
+    END IF;
+  END PROCESS;
 END ARCHITECTURE;
