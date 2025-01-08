@@ -28,13 +28,13 @@ ENTITY crop IS
     src_tready : IN STD_LOGIC;                                    --! Source AXI Stream tready
     src_tdata  : OUT STD_LOGIC_VECTOR(ENCODING_WDH - 1 DOWNTO 0); --! Source AXI Stream data for 1 pixel: 23:16 red, 15:8 blue, 7:0 green
     src_tlast  : OUT STD_LOGIC;                                   --! Source AXI Stream tlast - used as End of line marker
-    src_tuser  : OUT STD_LOGIC);                                  --! Source AXI Stream tuser - used as Start of frame marker
+    src_tuser  : OUT STD_LOGIC                                    --! Source AXI Stream tuser - used as Start of frame marker
+  );
 END ENTITY;
 
 ARCHITECTURE rtl OF crop IS
-  SIGNAL captured_pixel_reg   : STD_LOGIC_VECTOR(ENCODING_WDH - 1 DOWNTO 0) := (OTHERS => '0');
-  SIGNAL captured_columns_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
-  SIGNAL captured_rows_cnt    : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0)        := (OTHERS => '0');
+  SIGNAL captured_columns_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  SIGNAL captured_rows_cnt    : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
 
   SIGNAL cfg_x_offset_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
   SIGNAL cfg_y_offset_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
@@ -55,17 +55,17 @@ BEGIN
     END IF;
   END PROCESS;
 
-  --! Process used for registering incoming pixel value. Whenever rst signal is asserted it will stay at "0",
-  --! During normal operation it register snk_tdata value into captured_pixel_reg every rising edge but only when
-  --! snk_tvalid and snk_tready is high.
+  --! Process used for driving data output. Whenever rst signal is asserted src_tdata will stay at "0",
+  --! During normal operation incoming value could be passed to output stream when snk_tvalid and snk_tready are high.
+  --! Source will wait for Tvalid signal to be asserted to capture the data.
   capture_pixel_from_sink_proc : PROCESS (clk)
   BEGIN
     IF rising_edge(clk) THEN
       IF (rst = '1') THEN
-        captured_pixel_reg <= (OTHERS => '0');
+        src_tdata <= (OTHERS => '0');
       ELSE
         IF (snk_tvalid = '1' AND snk_tready = '1') THEN
-          captured_pixel_reg <= snk_tdata;
+          src_tdata <= snk_tdata;
         END IF;
       END IF;
     END IF;
@@ -132,6 +132,48 @@ BEGIN
           cfg_y_offset_reg <= unsigned(cfg_y_offset);
           cfg_cols_reg     <= unsigned(cfg_cols);
           cfg_rows_reg     <= unsigned(cfg_rows);
+        END IF;
+      END IF;
+    END IF;
+  END PROCESS;
+
+  --! Process used for driving source side signals. Whenever rst is asserted src_tvalid, src_tuser and src_tlast will be set to '0'.
+  --! During normal operation src_tvalid will be high when captured columns will be inside range defined as:
+  --! (cfg_x_offset, cfg_x_offset + cfg_columns) and captured rows will be inside range: (cfg_y_offset, cfg_y_offset + cfg_rows).
+  --! If the value is outside these ranges src_tvalid will be kept low (as well as src_tuser and src_tlast).
+  --! src_tuser (start of the frame) signal will be high whenever captured_columns = cfg_x_offset and captured_rows = cfg_y_offset
+  --! in any other case will be set to '0'.
+  --! src_tlast (end of the line) signal will be high when captured_columns - 1 = cfg_x_offset + cfg_columns.
+  --! in any other case will be set to '0'
+  drive_data_tlast_tuser_signal_for_source : PROCESS (clk)
+  BEGIN
+    IF rising_edge(clk) THEN
+      IF (rst = '1') THEN
+        src_tvalid <= '0';
+        src_tuser  <= '0';
+        src_tlast  <= '0';
+      ELSE
+        IF ((captured_columns_cnt >= cfg_x_offset_reg AND captured_columns_cnt < cfg_x_offset_reg + cfg_cols_reg)
+          AND (captured_rows_cnt >= cfg_y_offset_reg AND captured_rows_cnt < cfg_y_offset_reg + cfg_rows_reg)) THEN
+
+          src_tvalid <= '1';
+
+          IF (captured_columns_cnt = cfg_x_offset_reg) AND (captured_rows_cnt = cfg_y_offset_reg) THEN
+            src_tuser <= '1';
+          ELSE
+            src_tuser <= '0';
+          END IF;
+
+          IF (captured_columns_cnt - 1 = cfg_x_offset_reg + cfg_cols_reg) THEN
+            src_tlast <= '1';
+          ELSE
+            src_tlast <= '0';
+          END IF;
+
+        ELSE
+          src_tvalid <= '0';
+          src_tuser  <= '0';
+          src_tlast  <= '0';
         END IF;
       END IF;
     END IF;
