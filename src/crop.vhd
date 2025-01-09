@@ -3,8 +3,8 @@ CONTEXT ieee.ieee_std_context;
 
 ENTITY crop IS
   GENERIC (
-    CFG_WORDS_WDH : INTEGER := 16;
-    ENCODING_WDH  : INTEGER := 24
+    CFG_WORDS_WDH : INTEGER := 16; --! bitwidth of config words (defines max value of offset/row/cols)
+    ENCODING_WDH  : INTEGER := 24  --! bitwidth of colour encoding of captured pixels
   );
   PORT (
     clk : IN STD_LOGIC; --! Clock input
@@ -33,13 +33,20 @@ ENTITY crop IS
 END ENTITY;
 
 ARCHITECTURE rtl OF crop IS
+  --! counter used for keeping an eye of captured columns in definied row
   SIGNAL captured_columns_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
-  SIGNAL captured_rows_cnt    : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
 
+  --! counter used for keeping an eye of captured rows of video stream
+  SIGNAL captured_rows_cnt : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+
+  --! cropped stream x_offset (registered)
   SIGNAL cfg_x_offset_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  --! cropped stream y_offset (registered)
   SIGNAL cfg_y_offset_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
-  SIGNAL cfg_cols_reg     : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
-  SIGNAL cfg_rows_reg     : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  --! number of columns to crop (registered): x_offset + cfg_cols will define width of the video stream
+  SIGNAL cfg_cols_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+  --! number of rows to crop (registered): y_offset + cfg_rows will define height of the video stream
+  SIGNAL cfg_rows_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
 BEGIN
 
   --! Process used for driving Tready Signals. Whenever rst signal is asserted module is not ready for recieving the data.
