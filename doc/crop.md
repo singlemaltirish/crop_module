@@ -42,6 +42,7 @@
 | cfg_y_offset_reg     | UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) | cropped stream y_offset (registered)                                                              |
 | cfg_cols_reg         | UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) | number of columns to crop (registered): x_offset + cfg_cols will define width of the video stream |
 | cfg_rows_reg         | UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) | number of rows to crop (registered): y_offset + cfg_rows will define height of the video stream   |
+| snk_tlast_reg        | STD_LOGIC                            | used to align data with counter                                                                   |
 
 ## Processes
 - drive_tready_signals: ( clk )
@@ -52,7 +53,7 @@
   Process used for driving data output. Whenever rst signal is asserted src_tdata will stay at "0", During normal operation incoming value could be passed to output stream when snk_tvalid and snk_tready are high. Source will wait for Tvalid signal to be asserted to capture the data.
 - count_capured_columns_from_sink_proc: ( clk )
   - **Description**
-  Process used for counting up incoming columns from video stream. Whenever rst signal is asserted, it will clear the counter at first upcoming rising edge. In normal operation cnt will be set to 0 only when snk_tvalid, snk_tready and snk_tuser will be High (indicating start of the frame) or snk_tvalid, snk_tready and snk_tlast will be High (indicating end of the line). Every clock cycle it will then check if the master module is transmitting the data by checking snk_tvalid = '1' and snk_tready '1' and will increment by 1. In any other case it will hold its previous value.
+  Process used for counting up incoming columns from video stream. Whenever rst signal is asserted, it will clear the counter at first upcoming rising edge. In normal operation cnt will be modify only when snk_tvalid, snk_tready will be High (indicating ongoin transaction). counter will be cleared whenever new frame or end of the line arrives, in other cases it will be incremented by 1.
 - count_completed_rows_from_sink_proc: ( clk )
   - **Description**
   Process used for counting up number of rows coming from transmitting device. Whenever rst signal is asserted, it will clear the counter at first upcoming rising edge. In normal operation cnt will be set to 0 only when snk_tvalid, snk_tready and snk_tuser will be High (indicating start of the frame). Every clock cycle it will then check if snk_tvalid, snk_tready and snk_tlast is High (indication from Master that currently transferred pixel is the last one from the line) and increment if so. In any other case it will hold its previous value.
@@ -61,4 +62,4 @@
   Configuration should be changable during runtime. This process allows to overwrite configuration only when there is start of new frame detected. In any other case the configuration will be locked untill new frame.
 - drive_data_tlast_tuser_signal_for_source: ( clk )
   - **Description**
-  Process used for driving source side signals. Whenever rst is asserted src_tvalid, src_tuser and src_tlast will be set to '0'. During normal operation src_tvalid will be high when captured columns will be inside range defined as: (cfg_x_offset, cfg_x_offset + cfg_columns) and captured rows will be inside range: (cfg_y_offset, cfg_y_offset + cfg_rows). If the value is outside these ranges src_tvalid will be kept low (as well as src_tuser and src_tlast). src_tuser (start of the frame) signal will be high whenever captured_columns = cfg_x_offset and captured_rows = cfg_y_offset in any other case will be set to '0'. src_tlast (end of the line) signal will be high when captured_columns - 1 = cfg_x_offset + cfg_columns. in any other case will be set to '0'
+  Process used for driving source side signals. Whenever rst is asserted src_tvalid, src_tuser and src_tlast will be set to '0'. During normal operation src_tvalid will be high when captured columns will be inside range defined as: (cfg_x_offset, cfg_x_offset + cfg_columns) and captured rows will be inside range: (cfg_y_offset, cfg_y_offset + cfg_rows). If the value is outside these ranges src_tvalid will be kept low (as well as src_tuser and src_tlast). src_tuser (start of the frame) signal will be high whenever captured_columns = cfg_x_offset and captured_rows = cfg_y_offset in any other case will be set to '0'. src_tlast (end of the line) signal will be high when captured_columns + 1 = cfg_x_offset + cfg_columns. in any other case will be set to '0'

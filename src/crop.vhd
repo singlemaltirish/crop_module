@@ -1,6 +1,8 @@
 LIBRARY ieee;
 CONTEXT ieee.ieee_std_context;
 
+LIBRARY crop_lib;
+
 ENTITY crop IS
   GENERIC (
     CFG_WORDS_WDH : INTEGER := 16; --! bitwidth of config words (defines max value of offset/row/cols)
@@ -47,6 +49,10 @@ ARCHITECTURE rtl OF crop IS
   SIGNAL cfg_cols_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
   --! number of rows to crop (registered): y_offset + cfg_rows will define height of the video stream
   SIGNAL cfg_rows_reg : UNSIGNED(CFG_WORDS_WDH - 1 DOWNTO 0) := (OTHERS => '0');
+
+  --! used to align data with counter
+  SIGNAL snk_tlast_reg : STD_LOGIC := '0';
+
 BEGIN
 
   --! Process used for driving Tready Signals. Whenever rst signal is asserted module is not ready for recieving the data.
@@ -69,33 +75,35 @@ BEGIN
   BEGIN
     IF rising_edge(clk) THEN
       IF (rst = '1') THEN
-        src_tdata <= (OTHERS => '0');
+        src_tdata     <= (OTHERS => '0');
+        snk_tlast_reg <= '0';
       ELSE
         IF (snk_tvalid = '1' AND snk_tready = '1') THEN
-          src_tdata <= snk_tdata;
+          src_tdata     <= snk_tdata;
+          snk_tlast_reg <= snk_tlast;
         END IF;
       END IF;
     END IF;
   END PROCESS;
 
   --! Process used for counting up incoming columns from video stream. Whenever rst signal is asserted,
-  --! it will clear the counter at first upcoming rising edge. In normal operation cnt will be set to 0 only when
-  --! snk_tvalid, snk_tready and snk_tuser will be High (indicating start of the frame) or snk_tvalid, snk_tready and
-  --! snk_tlast will be High (indicating end of the line). Every clock cycle it will then check if the master
-  --! module is transmitting the data by checking snk_tvalid = '1' and snk_tready '1' and will increment by 1.
-  --! In any other case it will hold its previous value.
+  --! it will clear the counter at first upcoming rising edge. In normal operation cnt will be modify only when
+  --! snk_tvalid, snk_tready will be High (indicating ongoin transaction).
+  --! counter will be cleared whenever new frame or end of the line arrives, in other cases it will be incremented by 1.
   count_capured_columns_from_sink_proc : PROCESS (clk)
   BEGIN
     IF rising_edge(clk) THEN
       IF (rst = '1') THEN
         captured_columns_cnt <= (OTHERS => '0');
       ELSE
-        IF (snk_tvalid = '1' AND snk_tready = '1' AND (snk_tuser = '1' OR snk_tlast = '1')) THEN
-          captured_columns_cnt <= (OTHERS => '0');
-        ELSIF (snk_tvalid = '1' AND snk_tready = '1') THEN
-          captured_columns_cnt <= captured_columns_cnt + 1;
+        IF (snk_tvalid = '1' AND snk_tready = '1') THEN
+          IF ((snk_tuser = '1' OR snk_tlast_reg = '1')) THEN
+            captured_columns_cnt <= (OTHERS => '0');
+          ELSE
+            captured_columns_cnt <= captured_columns_cnt + 1;
+          END IF;
         ELSE
-          captured_columns_cnt <= captured_columns_cnt;
+          captured_columns_cnt <= (OTHERS => '0');
         END IF;
       END IF;
     END IF;
@@ -114,7 +122,7 @@ BEGIN
       ELSE
         IF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tuser = '1') THEN
           captured_rows_cnt <= (OTHERS => '0');
-        ELSIF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tlast = '1') THEN
+        ELSIF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tlast_reg = '1') THEN
           captured_rows_cnt <= captured_rows_cnt + 1;
         ELSE
           captured_rows_cnt <= captured_rows_cnt;
@@ -134,10 +142,10 @@ BEGIN
         cfg_cols_reg     <= (OTHERS => '0');
         cfg_rows_reg     <= (OTHERS => '0');
       ELSE
-        IF (snk_tvalid = '1' AND snk_tready = '1' AND snk_tlast = '1') THEN
+        IF (snk_tvalid = '1' AND snk_tuser = '1') THEN
           cfg_x_offset_reg <= unsigned(cfg_x_offset);
           cfg_y_offset_reg <= unsigned(cfg_y_offset);
-          cfg_cols_reg     <= unsigned(cfg_cols);
+          cfg_cols_reg     <= unsigned(cfg_cols) - 1;
           cfg_rows_reg     <= unsigned(cfg_rows);
         END IF;
       END IF;
@@ -150,7 +158,7 @@ BEGIN
   --! If the value is outside these ranges src_tvalid will be kept low (as well as src_tuser and src_tlast).
   --! src_tuser (start of the frame) signal will be high whenever captured_columns = cfg_x_offset and captured_rows = cfg_y_offset
   --! in any other case will be set to '0'.
-  --! src_tlast (end of the line) signal will be high when captured_columns - 1 = cfg_x_offset + cfg_columns.
+  --! src_tlast (end of the line) signal will be high when captured_columns + 1 = cfg_x_offset + cfg_columns.
   --! in any other case will be set to '0'
   drive_data_tlast_tuser_signal_for_source : PROCESS (clk)
   BEGIN
@@ -160,23 +168,28 @@ BEGIN
         src_tuser  <= '0';
         src_tlast  <= '0';
       ELSE
-        IF ((captured_columns_cnt >= cfg_x_offset_reg AND captured_columns_cnt < cfg_x_offset_reg + cfg_cols_reg)
-          AND (captured_rows_cnt >= cfg_y_offset_reg AND captured_rows_cnt < cfg_y_offset_reg + cfg_rows_reg)) THEN
+        IF (snk_tvalid = '1') THEN
+          IF ((captured_columns_cnt >= cfg_x_offset_reg - 1 AND captured_columns_cnt < cfg_x_offset_reg + cfg_cols_reg)
+            AND (captured_rows_cnt >= cfg_y_offset_reg AND captured_rows_cnt < cfg_y_offset_reg + cfg_rows_reg)) THEN
 
-          src_tvalid <= '1';
+            src_tvalid <= '1';
 
-          IF (captured_columns_cnt = cfg_x_offset_reg) AND (captured_rows_cnt = cfg_y_offset_reg) THEN
-            src_tuser <= '1';
+            IF (captured_columns_cnt = cfg_x_offset_reg - 1) AND (captured_rows_cnt = cfg_y_offset_reg) THEN
+              src_tuser <= '1';
+            ELSE
+              src_tuser <= '0';
+            END IF;
+
+            IF (captured_columns_cnt + 1 = cfg_x_offset_reg + cfg_cols_reg) THEN
+              src_tlast <= '1';
+            ELSE
+              src_tlast <= '0';
+            END IF;
           ELSE
-            src_tuser <= '0';
+            src_tvalid <= '0';
+            src_tuser  <= '0';
+            src_tlast  <= '0';
           END IF;
-
-          IF (captured_columns_cnt - 1 = cfg_x_offset_reg + cfg_cols_reg) THEN
-            src_tlast <= '1';
-          ELSE
-            src_tlast <= '0';
-          END IF;
-
         ELSE
           src_tvalid <= '0';
           src_tuser  <= '0';
